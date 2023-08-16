@@ -96,42 +96,54 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	rel, err := helmClient.GetRelease(podInfo.Name)
-	if err != nil {
-		if isReleaseNotFoundError(err) {
-			contextLogger.Info("Release not found, installing now")
-			_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
-				ReleaseName: podInfo.Name,
-				ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
-				Namespace:   podInfo.Namespace,
-				//Version:     podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
-				//Wait:       true, // We probably don't want to wait in the controller
-				ValuesYaml: defaultRedisValues,
-			}, nil)
-			if err != nil {
-				contextLogger.Error(err, "Failed installing helm release")
+	if podInfo.Spec.Redis.Enabled {
+		if err != nil {
+			if isReleaseNotFoundError(err) {
+				contextLogger.Info("Release not found, installing now")
+				_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
+					ReleaseName: podInfo.Name,
+					ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
+					Namespace:   podInfo.Namespace,
+					Version:     podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
+					//Wait:       true, // We probably don't want to wait in the controller
+					ValuesYaml: defaultRedisValues,
+				}, nil)
+				if err != nil {
+					contextLogger.Error(err, "Failed installing helm release")
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{Requeue: true}, nil
+
+			} else {
+				contextLogger.Error(err, "Failed to check for the redis release", "namespace", podInfo.Namespace, "name", podInfo.Name)
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{Requeue: true}, nil
-
-		} else {
-			contextLogger.Error(err, "Failed to check for the redis release", "namespace", podInfo.Namespace, "name", podInfo.Name)
-			return ctrl.Result{}, err
 		}
-	}
 
-	// Attach our finalizer, so we can clean up the redis helm install
-	if !controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
-		controllerutil.AddFinalizer(podInfo, redisFinalizer)
-		err = r.Update(ctx, podInfo)
-		if err != nil {
-			return ctrl.Result{}, err
+		// Attach our finalizer, so we can clean up the redis helm install
+		if !controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
+			controllerutil.AddFinalizer(podInfo, redisFinalizer)
+			err = r.Update(ctx, podInfo)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
 		}
-	}
 
-	// TODO: Check that the release is up to date
-	if releaseNeedsUpdate(rel, podInfo) {
-		contextLogger.Info("Redis release configuration changed, updating")
-		// Update the helm release
+		if releaseNeedsUpdate(rel, podInfo) {
+			contextLogger.Info("Redis release configuration changed, updating")
+			// Update the helm release
+		}
+	} else {
+		if rel != nil {
+			// Redis has been disabled, delete any existing helm chart
+			// and also remove the finalizer
+			r.uninstallRedis(contextLogger, podInfo, helmClient)
+			controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
+			err := r.Update(ctx, podInfo)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+		}
 	}
 
 	// This could honestly be just another helm install, but in the spirit of
@@ -188,6 +200,45 @@ func (r *PodInfoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func releaseNeedsUpdate(current *release.Release, podInfo *appsv1alpha1.PodInfo) bool {
+	if current.Chart.Metadata.Version != podInfo.Spec.Redis.Version {
+		return true
+	}
+	return false
+}
+
+func deploymentNeedsUpdate(current *appsv1.Deployment, podInfo *appsv1alpha1.PodInfo) bool {
+	container := current.Spec.Template.Spec.Containers[0]
+	if fmt.Sprintf(
+		"%s:%s",
+		podInfo.Spec.Image.Repository,
+		podInfo.Spec.Image.Tag,
+	) != container.Image {
+		return true
+	}
+
+	if podInfo.Spec.ReplicaCount != current.Spec.Replicas {
+		return true
+	}
+
+	resources := podInfo.Spec.Resources
+	if resources.MemoryLimit != container.Resources.Limits.Memory().String() {
+		return true
+	}
+
+	if resources.CpuRequest != container.Resources.Requests.Cpu().String() {
+		return true
+	}
+
+	ui := podInfo.Spec.Ui
+	for _, env := range container.Env {
+		if env.Name == "PODINFO_UI_COLOR" && env.Value != ui.Color {
+			return true
+		}
+		if env.Name == "PODINFO_UI_MESSAGE" && env.Value != ui.Message {
+			return true
+		}
+	}
+
 	return false
 }
 
