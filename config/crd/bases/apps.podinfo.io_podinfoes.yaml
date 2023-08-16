@@ -1,0 +1,77 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.11.1
+  creationTimestamp: null
+  name: podinfoes.apps.podinfo.io
+spec:
+  group: apps.podinfo.io
+  names:
+    kind: PodInfo
+    listKind: PodInfoList
+    plural: podinfoes
+    singular: podinfo
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PodInfo is the Schema for the podinfoes API
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to. Cannot be updated. In CamelCase. More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PodInfoSpec defines the desired state of PodInfo
+            properties:
+              image:
+                properties:
+                  repository:
+                    type: string
+                  tag:
+                    type: string
+                type: object
+              redis:
+                properties:
+                  enabled:
+                    type: boolean
+                  version:
+                    type: string
+                type: object
+              replicaCount:
+                format: int32
+                type: integer
+              resources:
+                properties:
+                  cpuRequest:
+                    type: string
+                  memoryLimit:
+                    type: string
+                type: object
+              ui:
+                properties:
+                  color:
+                    type: string
+                  message:
+                    type: string
+                type: object
+            type: object
+          status:
+            description: PodInfoStatus defines the observed state of PodInfo
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

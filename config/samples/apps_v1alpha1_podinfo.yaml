@@ -1,0 +1,24 @@
+apiVersion: apps.podinfo.io/v1alpha1
+kind: PodInfo
+metadata:
+  labels:
+    app.kubernetes.io/name: podinfo
+    app.kubernetes.io/instance: podinfo-sample
+    app.kubernetes.io/part-of: podinfo-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: podinfo-operator
+  name: podinfo-sample
+spec:
+  replicaCount: 2
+  resources:
+    memoryLimit: 64Mi
+    cpuRequest: 100m
+  image:
+    repository: ghcr.io/stefanprodan/podinfo
+    tag: latest
+  ui:
+    color: "#34577c"
+    message: "some string"
+  redis:
+    enabled: true
+    version: "17.5.4"
