@@ -33,6 +33,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/reconcile"
+	"time"
 
 	appsv1alpha1 "github.com/robwittman/podinfo-operator/api/v1alpha1"
 )
@@ -95,48 +97,18 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, nil
 	}
 
-	rel, err := helmClient.GetRelease(podInfo.Name)
+	// Reconcile the helm release. If the reconciliation fails,
+	// or if there was an action taken, we want to requeue to
+	// ensure the redis helm chart is installed before continuing
 	if podInfo.Spec.Redis.Enabled {
-		if err != nil {
-			if isReleaseNotFoundError(err) {
-				contextLogger.Info("Release not found, installing now")
-				_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
-					ReleaseName: podInfo.Name,
-					ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
-					Namespace:   podInfo.Namespace,
-					Version:     podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
-					//Wait:       true, // We probably don't want to wait in the controller
-					ValuesYaml: defaultRedisValues,
-				}, nil)
-				if err != nil {
-					contextLogger.Error(err, "Failed installing helm release")
-					return ctrl.Result{}, err
-				}
-				return ctrl.Result{Requeue: true}, nil
-
-			} else {
-				contextLogger.Error(err, "Failed to check for the redis release", "namespace", podInfo.Namespace, "name", podInfo.Name)
-				return ctrl.Result{}, err
-			}
+		shouldContinue, result, err := r.reconcileHelmRelease(helmClient, contextLogger, podInfo)
+		if err != nil || !shouldContinue {
+			return result, err
 		}
 
-		// Attach our finalizer, so we can clean up the redis helm install
-		if !controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
-			controllerutil.AddFinalizer(podInfo, redisFinalizer)
-			err = r.Update(ctx, podInfo)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
-		}
-
-		if releaseNeedsUpdate(rel, podInfo) {
-			contextLogger.Info("Redis release configuration changed, updating")
-			// Update the helm release
-		}
 	} else {
+		rel, _ := helmClient.GetRelease(podInfo.Name)
 		if rel != nil {
-			// Redis has been disabled, delete any existing helm chart
-			// and also remove the finalizer
 			r.uninstallRedis(contextLogger, podInfo, helmClient)
 			controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
 			err := r.Update(ctx, podInfo)
@@ -337,4 +309,50 @@ func generateLabels(podInfo *appsv1alpha1.PodInfo) map[string]string {
 		"app":         "podinfo",
 		"podinfo-crd": podInfo.Name, // TODO: Can probably find a better label to use
 	}
+}
+
+func (r *PodInfoReconciler) reconcileHelmRelease(helmClient helmclient.Client, contextLogger logr.Logger, podInfo *appsv1alpha1.PodInfo) (bool, reconcile.Result, error) {
+	ctx := context.TODO()
+	rel, err := helmClient.GetRelease(podInfo.Name)
+	if err != nil {
+		if isReleaseNotFoundError(err) {
+			contextLogger.Info("Release not found, installing now")
+			_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
+				ReleaseName: podInfo.Name,
+				ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
+				Namespace:   podInfo.Namespace,
+				Version:     podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
+				ValuesYaml:  defaultRedisValues,
+			}, nil)
+			if err != nil {
+				contextLogger.Error(err, "Failed installing helm release")
+				return false, ctrl.Result{}, err
+			}
+			return false, ctrl.Result{Requeue: true}, nil
+
+		} else {
+			contextLogger.Error(err, "Failed to check for the redis release", "namespace", podInfo.Namespace, "name", podInfo.Name)
+			return false, ctrl.Result{}, err
+		}
+	}
+
+	// Ensure we attach our finalizer, so we can clean up the redis helm install
+	if !controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
+		controllerutil.AddFinalizer(podInfo, redisFinalizer)
+		err = r.Update(ctx, podInfo)
+		if err != nil {
+			return false, ctrl.Result{}, err
+		}
+	}
+
+	if rel.Info.Status != "deployed" {
+		contextLogger.Info("Waiting for helm release to be deployed", "namespace", podInfo.Namespace, "name", podInfo.Name)
+		return false, ctrl.Result{RequeueAfter: time.Second * 5}, nil
+	}
+
+	if releaseNeedsUpdate(rel, podInfo) {
+		contextLogger.Info("TODO: Redis release configuration changed, updating")
+	}
+
+	return true, ctrl.Result{}, nil
 }
