@@ -41,6 +41,9 @@ spec:
                     type: string
                   tag:
                     type: string
+                required:
+                - repository
+                - tag
                 type: object
               redis:
                 properties:
@@ -48,6 +51,8 @@ spec:
                     type: boolean
                   version:
                     type: string
+                required:
+                - enabled
                 type: object
               replicaCount:
                 format: int32
@@ -58,6 +63,9 @@ spec:
                     type: string
                   memoryLimit:
                     type: string
+                required:
+                - cpuRequest
+                - memoryLimit
                 type: object
               ui:
                 properties:
@@ -65,7 +73,16 @@ spec:
                     type: string
                   message:
                     type: string
+                required:
+                - color
+                - message
                 type: object
+            required:
+            - image
+            - redis
+            - replicaCount
+            - resources
+            - ui
             type: object
           status:
             description: PodInfoStatus defines the observed state of PodInfo

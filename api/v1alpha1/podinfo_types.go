@@ -25,30 +25,30 @@ import (
 
 // PodInfoSpec defines the desired state of PodInfo
 type PodInfoSpec struct {
-	ReplicaCount *int32           `json:"replicaCount,omitempty"`
-	Resources    PodInfoResources `json:"resources,omitempty"`
-	Image        PodInfoImage     `json:"image,omitempty"`
-	Ui           PodInfoUi        `json:"ui,omitempty"`
-	Redis        PodInfoRedis     `json:"redis,omitempty"`
+	ReplicaCount *int32           `json:"replicaCount"`
+	Resources    PodInfoResources `json:"resources"`
+	Image        PodInfoImage     `json:"image"`
+	Ui           PodInfoUi        `json:"ui"`
+	Redis        PodInfoRedis     `json:"redis"`
 }
 
 type PodInfoResources struct {
-	MemoryLimit string `json:"memoryLimit,omitempty"`
-	CpuRequest  string `json:"cpuRequest,omitempty"`
+	MemoryLimit string `json:"memoryLimit"`
+	CpuRequest  string `json:"cpuRequest"`
 }
 
 type PodInfoImage struct {
-	Repository string `json:"repository,omitempty"`
-	Tag        string `json:"tag,omitempty"`
+	Repository string `json:"repository"`
+	Tag        string `json:"tag"`
 }
 
 type PodInfoUi struct {
-	Color   string `json:"color,omitempty"`
-	Message string `json:"message,omitempty"`
+	Color   string `json:"color"`
+	Message string `json:"message"`
 }
 
 type PodInfoRedis struct {
-	Enabled bool   `json:"enabled,omitempty"`
+	Enabled bool   `json:"enabled"`
 	Version string `json:"version,omitempty"`
 }
 
