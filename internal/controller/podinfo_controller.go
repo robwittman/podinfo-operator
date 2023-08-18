@@ -311,6 +311,10 @@ func generateLabels(podInfo *appsv1alpha1.PodInfo) map[string]string {
 	}
 }
 
+// reconcileHelmRelease ensures that the required Redis helm chart is
+// running in the cluster for use by podinfo. Admittedly, this can most
+// certainly have been a sidecar, but I prefer to give datasources
+// their own lifecycle
 func (r *PodInfoReconciler) reconcileHelmRelease(helmClient helmclient.Client, contextLogger logr.Logger, podInfo *appsv1alpha1.PodInfo) (bool, reconcile.Result, error) {
 	ctx := context.TODO()
 	rel, err := helmClient.GetRelease(podInfo.Name)
