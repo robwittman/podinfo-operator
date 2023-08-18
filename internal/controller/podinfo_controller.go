@@ -153,7 +153,7 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	err = r.Get(ctx, types.NamespacedName{Name: podInfo.Name, Namespace: podInfo.Namespace}, deployment)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new deployment
-		dep := r.podInfoDeployment(podInfo, rel)
+		dep := r.podInfoDeployment(podInfo)
 		contextLogger.Info("Creating a new Deployment", "namespace", podInfo.Namespace, "name", podInfo.Name)
 		err = r.Create(ctx, dep)
 		if err != nil {
@@ -216,7 +216,7 @@ func deploymentNeedsUpdate(current *appsv1.Deployment, podInfo *appsv1alpha1.Pod
 		return true
 	}
 
-	if podInfo.Spec.ReplicaCount != current.Spec.Replicas {
+	if *podInfo.Spec.ReplicaCount != *current.Spec.Replicas {
 		return true
 	}
 
@@ -247,7 +247,6 @@ func deploymentNeedsUpdate(current *appsv1.Deployment, podInfo *appsv1alpha1.Pod
 // to do so, ala `errors.IsNotFound(err), but this is what
 // we'll use for now
 func isReleaseNotFoundError(err error) bool {
-	fmt.Println(err.Error())
 	return err.Error() == "release: not found"
 }
 
@@ -260,7 +259,7 @@ func (r *PodInfoReconciler) uninstallRedis(contextLogger logr.Logger, podInfo *a
 	})
 }
 
-func (r *PodInfoReconciler) podInfoDeployment(podInfo *appsv1alpha1.PodInfo, redis *release.Release) *appsv1.Deployment {
+func (r *PodInfoReconciler) podInfoDeployment(podInfo *appsv1alpha1.PodInfo) *appsv1.Deployment {
 	labels := generateLabels(podInfo)
 	replicaCount := podInfo.Spec.ReplicaCount
 	deployment := &appsv1.Deployment{
