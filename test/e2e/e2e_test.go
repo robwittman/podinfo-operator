@@ -32,7 +32,7 @@ import (
 )
 
 // constant parts of the file
-const namespace = "podinfo-operator"
+const namespace = "podinfo-operator-system"
 
 // NOTE: The resources were deploying here are very similar to the
 // memcached-operator example provided by the operator-sdk. Most of this was borrowed
