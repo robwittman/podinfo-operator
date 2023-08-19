@@ -18,9 +18,11 @@ package controller
 
 import (
 	"context"
+	errors2 "errors"
 	"fmt"
 	"github.com/go-logr/logr"
 	helmclient "github.com/mittwald/go-helm-client"
+	appsv1alpha1 "github.com/robwittman/podinfo-operator/api/v1alpha1"
 	"helm.sh/helm/v3/pkg/release"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
@@ -37,8 +39,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"time"
-
-	appsv1alpha1 "github.com/robwittman/podinfo-operator/api/v1alpha1"
 )
 
 // PodInfoReconciler reconciles a PodInfo object
@@ -67,6 +67,7 @@ const redisFinalizer = "apps.podinfo.io/finalizer"
 
 const (
 	podInfoAvailable = "Available"
+	redisStatus      = "Redis"
 )
 
 // Reconcile installs the Redis helm chart, as well as
@@ -75,8 +76,7 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	contextLogger := log.FromContext(ctx)
 
 	podInfo := &appsv1alpha1.PodInfo{}
-	err := r.Get(ctx, req.NamespacedName, podInfo)
-	if err != nil {
+	if err := r.Get(ctx, req.NamespacedName, podInfo); err != nil {
 		if errors.IsNotFound(err) {
 			contextLogger.Info("PodInfo resource not found, must be deleted")
 			return ctrl.Result{}, nil
@@ -95,17 +95,8 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	isPodInfoMarkedToBeDeleted := podInfo.GetDeletionTimestamp() != nil
 	if isPodInfoMarkedToBeDeleted {
 		if controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
-			if err := r.uninstallRedis(contextLogger, podInfo, helmClient); err != nil {
-				return ctrl.Result{}, err
-			}
-
-			// Remove the redisFinalizer. Once all finalizers have been
-			// removed, the object will be deleted.
-			controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
-			err := r.Update(ctx, podInfo)
-			if err != nil {
-				return ctrl.Result{}, err
-			}
+			err := r.doRedisFinalizer(contextLogger, podInfo, helmClient)
+			return ctrl.Result{}, err
 		}
 		return ctrl.Result{}, nil
 	}
@@ -116,8 +107,8 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	if podInfo.Spec.Redis.Enabled {
 		// TODO: We should store some data in the CR conditions
 		// about the currently installed helm release, and its status
-		shouldContinue, result, err := r.reconcileHelmRelease(helmClient, contextLogger, podInfo)
-		if err != nil || !shouldContinue {
+		helmInstalled, result, err := r.reconcileHelmRelease(helmClient, contextLogger, podInfo)
+		if err != nil || !helmInstalled {
 			return result, err
 		}
 
@@ -126,12 +117,13 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		// need to clean up the now orphaned resource
 		rel, _ := helmClient.GetRelease(podInfo.Name)
 		if rel != nil {
-			r.uninstallRedis(contextLogger, podInfo, helmClient)
-			controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
-			err := r.Update(ctx, podInfo)
-			if err != nil {
+			_ = r.uninstallRedis(contextLogger, podInfo, helmClient)
+			if controllerutil.ContainsFinalizer(podInfo, redisFinalizer) {
+				controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
+				err := r.Update(ctx, podInfo)
 				return ctrl.Result{}, err
 			}
+			return ctrl.Result{}, nil
 		}
 	}
 
@@ -269,14 +261,35 @@ func isReleaseNotFoundError(err error) bool {
 }
 
 // Cleanup the Redis helm releases when a CRD is deleted
+// Any errors that occur when updating the status are logged and ignored,
+// as the priority is getting the release uninstalled
 func (r *PodInfoReconciler) uninstallRedis(contextLogger logr.Logger, podInfo *appsv1alpha1.PodInfo, helmClient helmclient.Client) error {
-	return helmClient.UninstallRelease(&helmclient.ChartSpec{
+	if err := r.setRedisCondition(
+		podInfo, metav1.ConditionFalse,
+		"Installed", "Redis dependency uninstalling",
+	); err != nil {
+		contextLogger.Error(err, "Failed to set redis status")
+	}
+
+	uninstallErr := helmClient.UninstallRelease(&helmclient.ChartSpec{
 		ReleaseName: podInfo.Name,
 		Namespace:   podInfo.Namespace,
 		//Wait:        true, // TODO: Wait for deletion before completing. However, we were getting 'context deadline exceeded'
 	})
+
+	if err := r.setRedisCondition(
+		podInfo, metav1.ConditionFalse,
+		"Uninstalled", "Redis dependency uninstalled / disabled",
+	); err != nil {
+		contextLogger.Error(err, "Failed to set redis status")
+	}
+
+	return uninstallErr
+
 }
 
+// podInfoDeployment generates a configured deployment resource
+// to satisfy the custom resource
 func (r *PodInfoReconciler) podInfoDeployment(podInfo *appsv1alpha1.PodInfo) *appsv1.Deployment {
 	labels := generateLabels(podInfo)
 	replicaCount := podInfo.Spec.ReplicaCount
@@ -332,6 +345,8 @@ func (r *PodInfoReconciler) podInfoDeployment(podInfo *appsv1alpha1.PodInfo) *ap
 	return deployment
 }
 
+// podInfoService creates a service configured for the
+// podinfo custom resource
 func (r *PodInfoReconciler) podInfoService(podInfo *appsv1alpha1.PodInfo) *v1.Service {
 	labels := generateLabels(podInfo)
 	svc := &v1.Service{
@@ -373,6 +388,13 @@ func (r *PodInfoReconciler) reconcileHelmRelease(helmClient helmclient.Client, c
 	if err != nil {
 		if isReleaseNotFoundError(err) {
 			contextLogger.Info("Release not found, installing now")
+			if err := r.setRedisCondition(
+				podInfo, metav1.ConditionFalse,
+				"Reconciling", "Installing redis dependency",
+			); err != nil {
+				contextLogger.Error(err, "Failed to set redis status")
+			}
+
 			_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
 				ReleaseName: podInfo.Name,
 				ChartName:   podInfo.Spec.Redis.Registry,
@@ -401,14 +423,49 @@ func (r *PodInfoReconciler) reconcileHelmRelease(helmClient helmclient.Client, c
 		}
 	}
 
-	if rel.Info.Status != "deployed" {
-		contextLogger.Info("Waiting for helm release to be deployed", "namespace", podInfo.Namespace, "name", podInfo.Name)
-		return false, ctrl.Result{RequeueAfter: time.Second * 5}, nil
-	}
-
 	if releaseNeedsUpdate(rel, podInfo) {
 		contextLogger.Info("TODO: Redis release configuration changed, updating")
 	}
 
-	return true, ctrl.Result{}, nil
+	switch rel.Info.Status {
+	case release.StatusDeployed:
+		if err := r.setRedisCondition(
+			podInfo, metav1.ConditionTrue,
+			"Installed", "Redis dependency installed",
+		); err != nil {
+			contextLogger.Error(err, "Failed to set redis status as installing")
+		}
+
+		return true, ctrl.Result{}, nil
+
+	case release.StatusFailed:
+		_ = r.setRedisCondition(
+			podInfo, metav1.ConditionFalse,
+			"Failed", fmt.Sprintf("Redis installation failed: %s", rel.Info.Description),
+		)
+		return false, ctrl.Result{}, errors2.New(rel.Info.Description)
+	default:
+		return false, ctrl.Result{RequeueAfter: time.Second * 5}, nil
+	}
+}
+
+// Helper for setting status condition for Redis dependency
+func (r *PodInfoReconciler) setRedisCondition(podInfo *appsv1alpha1.PodInfo, status metav1.ConditionStatus, reason string, message string) error {
+	meta.SetStatusCondition(&podInfo.Status.Conditions, metav1.Condition{
+		Type:    redisStatus,
+		Status:  status,
+		Reason:  reason,
+		Message: message,
+	})
+	return r.Status().Update(context.TODO(), podInfo)
+}
+
+func (r *PodInfoReconciler) doRedisFinalizer(contextLogger logr.Logger, podInfo *appsv1alpha1.PodInfo, helmClient helmclient.Client) error {
+	if err := r.uninstallRedis(contextLogger, podInfo, helmClient); err != nil {
+		return err
+	}
+	// Remove the redisFinalizer. Once all finalizers have been
+	// removed, the object will be deleted.
+	controllerutil.RemoveFinalizer(podInfo, redisFinalizer)
+	return r.Update(context.TODO(), podInfo)
 }

@@ -155,6 +155,39 @@ var _ = Describe("podinfo", Ordered, func() {
 				return nil
 			}
 			Eventually(getStatus, time.Minute, time.Second).Should(Succeed())
+
+			By("Validating the podinfo replica count")
+			cmd = exec.Command("kubectl", "get", "deployment", "podinfo-sample",
+				"-n", namespace, "-o", "jsonpath={.spec.replicas}")
+			replicaCount, err := Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			Expect(string(replicaCount)).To(Equal("2"))
+
+			By("Validating the environment variables are set")
+			cmd = exec.Command("kubectl", "get", "deployment", "podinfo-sample",
+				"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name==\"PODINFO_UI_COLOR\")].value}")
+			color, err := Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			Expect(string(color)).To(Equal("#34577c"))
+
+			cmd = exec.Command("kubectl", "get", "deployment", "podinfo-sample",
+				"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].env[?(@.name==\"PODINFO_UI_MESSAGE\")].value}")
+			message, err := Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			Expect(string(message)).To(Equal("some string"))
+
+			By("Validating the resource configuration")
+			cmd = exec.Command("kubectl", "get", "deployment", "podinfo-sample",
+				"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].resources.limits.memory}")
+			memoryLimit, err := Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			Expect(string(memoryLimit)).To(Equal("64Mi"))
+
+			cmd = exec.Command("kubectl", "get", "deployment", "podinfo-sample",
+				"-n", namespace, "-o", "jsonpath={.spec.template.spec.containers[0].resources.requests.cpu}")
+			cpuRequest, err := Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+			Expect(string(cpuRequest)).To(Equal("100m"))
 		})
 	})
 })
