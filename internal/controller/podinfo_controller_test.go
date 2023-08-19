@@ -274,8 +274,8 @@ func TestPodInfoReconciler_reconcileHelmReleaseInstallsChart(t *testing.T) {
 		ReleaseName: input.Name,
 		ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
 		Namespace:   input.Namespace,
-		Version:     input.Spec.Redis.Version,
-		ValuesYaml:  defaultRedisValues,
+		//Version:     input.Spec.Redis.Version,
+		ValuesYaml: defaultRedisValues,
 	}, nil)
 
 	_, _, err := r.reconcileHelmRelease(mockClient, l, input)

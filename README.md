@@ -26,7 +26,7 @@ well as the [PodInfo Service](https://github.com/stefanprodan/podinfo) connected
 
 ### Connecting to PodInfo 
 
-The operator does not deploy an ingress resource for the podinfo service. To connect to it, 
+The operator does no[podinfo_controller_test.go](internal%2Fcontroller%2Fpodinfo_controller_test.go)t deploy an ingress resource for the podinfo service. To connect to it, 
 port-forward to the service 
 ```shell 
 kubectl port-forward svc/podinfo-sample -n default 9898
