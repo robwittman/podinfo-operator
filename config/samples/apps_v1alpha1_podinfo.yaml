@@ -21,4 +21,5 @@ spec:
     message: "some string"
   redis:
     enabled: true
-    version: "17.5.4"
+    version: "17.5.4" # TODO: This isn't currently respected by the controller
+    registry: "oci://registry-1.docker.io/bitnamicharts/redis"

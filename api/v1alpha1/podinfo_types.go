@@ -48,13 +48,15 @@ type PodInfoUi struct {
 }
 
 type PodInfoRedis struct {
-	Enabled bool   `json:"enabled"`
-	Version string `json:"version,omitempty"`
+	Enabled  bool   `json:"enabled"`
+	Version  string `json:"version,omitempty"`
+	Registry string `json:"registry,omitempty"`
 }
 
 // PodInfoStatus defines the observed state of PodInfo
 type PodInfoStatus struct {
-	//Redis PodInfoRedisStatus `json:"redis,omitempty"`
+	// +operator-sdk:csv:customresourcedefinitions:type=status
+	Conditions []metav1.Condition `json:"conditions,omitempty" patchStrategy:"merge" patchMergeKey:"type" protobuf:"bytes,1,rep,name=conditions"`
 }
 
 //type PodInfoHelmReleaseStatus struct {

@@ -1,0 +1,4 @@
+namespace: podinfo-operator-system
+
+resources:
+  - ../config/rbac
