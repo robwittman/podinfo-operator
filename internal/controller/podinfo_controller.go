@@ -25,6 +25,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -48,6 +49,11 @@ type PodInfoReconciler struct {
 //+kubebuilder:rbac:groups=apps.podinfo.io,resources=podinfoes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=apps.podinfo.io,resources=podinfoes/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=apps.podinfo.io,resources=podinfoes/finalizers,verbs=update
+//+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=secrets,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups="",resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 
 // Just deploy a single replica, without authentication
 var defaultRedisValues = `
@@ -57,6 +63,10 @@ var defaultRedisValues = `
 `
 
 const redisFinalizer = "apps.podinfo.io/finalizer"
+
+const (
+	podInfoAvailable = "Available"
+)
 
 func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
@@ -159,6 +169,15 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 
 	contextLogger.Info("Reconciliation completed")
 
+	meta.SetStatusCondition(&podInfo.Status.Conditions, metav1.Condition{Type: podInfoAvailable,
+		Status: metav1.ConditionTrue, Reason: "Reconciling",
+		Message: fmt.Sprintf("Podinfo deployment for (%s) created successfully", podInfo.Name)})
+
+	if err := r.Status().Update(ctx, podInfo); err != nil {
+		contextLogger.Error(err, "Failed to update podInfo status")
+		return ctrl.Result{}, err
+	}
+
 	return ctrl.Result{}, nil
 }
 
@@ -172,9 +191,14 @@ func (r *PodInfoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 func releaseNeedsUpdate(current *release.Release, podInfo *appsv1alpha1.PodInfo) bool {
-	if current.Chart.Metadata.Version != podInfo.Spec.Redis.Version {
-		return true
-	}
+	// Ideally, this would check the installed version against the requested
+	// version in the CRD spec. However, there were some issues configuring
+	// go-helm-client to respect the version spec. Something I would
+	// dig into given more time
+
+	//if current.Chart.Metadata.Version != podInfo.Spec.Redis.Version {
+	//	return true
+	//}
 	return false
 }
 
@@ -323,10 +347,10 @@ func (r *PodInfoReconciler) reconcileHelmRelease(helmClient helmclient.Client, c
 			contextLogger.Info("Release not found, installing now")
 			_, err := helmClient.InstallChart(ctx, &helmclient.ChartSpec{
 				ReleaseName: podInfo.Name,
-				ChartName:   "oci://registry-1.docker.io/bitnamicharts/redis",
+				ChartName:   podInfo.Spec.Redis.Registry,
 				Namespace:   podInfo.Namespace,
-				Version:     podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
-				ValuesYaml:  defaultRedisValues,
+				//Version:    podInfo.Spec.Redis.Version, // TODO: Can't seem to find specific versions
+				ValuesYaml: defaultRedisValues,
 			}, nil)
 			if err != nil {
 				contextLogger.Error(err, "Failed installing helm release")

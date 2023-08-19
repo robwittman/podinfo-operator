@@ -70,6 +70,9 @@ spec:
         - /manager
         args:
         - --leader-elect
+        env:
+          - name: HELM_EXPERIMENTAL_OCI
+            value: "1"
         image: controller:latest
         name: manager
         securityContext:
@@ -98,5 +101,12 @@ spec:
           requests:
             cpu: 10m
             memory: 64Mi
+        volumeMounts:
+          - mountPath: /tmp
+            name: scratch
       serviceAccountName: controller-manager
       terminationGracePeriodSeconds: 10
+      volumes:
+        - name: scratch
+          emptyDir:
+            medium: Memory

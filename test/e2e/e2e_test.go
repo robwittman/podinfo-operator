@@ -39,10 +39,17 @@ const namespace = "podinfo-operator-system"
 // from those samples, with modifications and substitutions as necessary
 // https://github.com/operator-framework/operator-sdk/blob/master/testdata/go/v3/memcached-operator/test/e2e/e2e_test.go
 var _ = Describe("podinfo", Ordered, func() {
-
-	AfterAll(func() {
-		By("removing manager namespace")
+	BeforeAll(func() {
+		By("creating manager namespace")
 		cmd := exec.Command("kubectl", "create", "ns", namespace)
+		_, _ = Run(cmd)
+	})
+	AfterAll(func() {
+		By("remove CRD")
+		cmd := exec.Command("kubectl", "delete", "-f", "config/samples/apps_v1alpha1_podinfo.yaml", "-n", namespace)
+		_, _ = Run(cmd)
+		By("removing manager namespace")
+		cmd = exec.Command("kubectl", "delete", "ns", namespace)
 		_, _ = Run(cmd)
 	})
 
@@ -65,6 +72,11 @@ var _ = Describe("podinfo", Ordered, func() {
 
 			By("installing CRDs")
 			cmd = exec.Command("make", "install")
+			_, err = Run(cmd)
+			ExpectWithOffset(1, err).NotTo(HaveOccurred())
+
+			By("setting up RBAC")
+			cmd = exec.Command("bash", "-c", "kustomize build test | kubectl apply -f - -n "+namespace)
 			_, err = Run(cmd)
 			ExpectWithOffset(1, err).NotTo(HaveOccurred())
 

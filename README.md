@@ -3,11 +3,21 @@ Sample Operator for https://github.com/stefanprodan/podinfo
 
 ## Getting Started 
 
-Create a local kubernetes cluster with your preferred method. Then, we can install
-the operator, and deploy our sample resource 
+Create a local kubernetes cluster with your preferred method. Then we can run the operator either 
+in cluster, or locally
 
+### In-Cluster 
 ``` 
-make install # Install the operator itself 
+make install deploy  
+```
+
+### Locally 
+``` 
+make install run 
+```
+
+Once the operator is running, we can apply the sample CRD using 
+```
 kubectl apply -f config/samples/apps_v1alpha1_podinfo.yaml
 ```
 
