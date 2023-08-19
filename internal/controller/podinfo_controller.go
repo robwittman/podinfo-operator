@@ -26,6 +26,7 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -68,6 +69,8 @@ const (
 	podInfoAvailable = "Available"
 )
 
+// Reconcile installs the Redis helm chart, as well as
+// the podInfo deployment and service
 func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	contextLogger := log.FromContext(ctx)
 
@@ -83,7 +86,7 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	}
 
 	helmClient, err := helmclient.New(&helmclient.Options{
-		Namespace: podInfo.Namespace, // Change this to the namespace you wish the client to operate in.
+		Namespace: podInfo.Namespace,
 	})
 	if err != nil {
 		contextLogger.Error(err, "Failed getting helm client")
@@ -111,12 +114,16 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 	// or if there was an action taken, we want to requeue to
 	// ensure the redis helm chart is installed before continuing
 	if podInfo.Spec.Redis.Enabled {
+		// TODO: We should store some data in the CR conditions
+		// about the currently installed helm release, and its status
 		shouldContinue, result, err := r.reconcileHelmRelease(helmClient, contextLogger, podInfo)
 		if err != nil || !shouldContinue {
 			return result, err
 		}
 
 	} else {
+		// If redis is not enabled, but previously was, we
+		// need to clean up the now orphaned resource
 		rel, _ := helmClient.GetRelease(podInfo.Name)
 		if rel != nil {
 			r.uninstallRedis(contextLogger, podInfo, helmClient)
@@ -128,16 +135,13 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		}
 	}
 
-	// This could honestly be just another helm install, but in the spirit of
-	// exercising the SDK a bit, we'll create a deployment / service / ingress
-	// manually
 	deployment := &appsv1.Deployment{}
+	podInfoDeployment := r.podInfoDeployment(podInfo)
 	err = r.Get(ctx, types.NamespacedName{Name: podInfo.Name, Namespace: podInfo.Namespace}, deployment)
 	if err != nil && errors.IsNotFound(err) {
 		// Define a new deployment
-		dep := r.podInfoDeployment(podInfo)
 		contextLogger.Info("Creating a new Deployment", "namespace", podInfo.Namespace, "name", podInfo.Name)
-		err = r.Create(ctx, dep)
+		err = r.Create(ctx, podInfoDeployment)
 		if err != nil {
 			contextLogger.Error(err, "Failed to create new Deployment", "namespace", podInfo.Namespace, "name", podInfo.Name)
 			return ctrl.Result{}, err
@@ -146,6 +150,18 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{Requeue: true}, nil
 	} else if err != nil {
 		contextLogger.Error(err, "Failed to get Deployment")
+		return ctrl.Result{}, err
+	}
+
+	if deploymentNeedsUpdate(deployment, podInfo) {
+		contextLogger.Info("Updating deployment", "namespace", podInfo.Namespace, "name", podInfo.Name)
+		err = r.Update(ctx, podInfoDeployment)
+		if err != nil {
+			contextLogger.Error(err, "Failed to update deployment Deployment", "namespace", podInfo.Namespace, "name", podInfo.Name)
+			return ctrl.Result{}, err
+		}
+		// TODO: This should also update the status of the CRD to
+		// indicate a rollout is taking place
 		return ctrl.Result{}, err
 	}
 
@@ -167,8 +183,9 @@ func (r *PodInfoReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 		return ctrl.Result{}, err
 	}
 
-	contextLogger.Info("Reconciliation completed")
-
+	// Seems there's a passthrough somewhere, causing this to emit
+	// Operation cannot be fulfilled on podinfoes.apps.podinfo.io
+	// TODO: The above should be fixed
 	meta.SetStatusCondition(&podInfo.Status.Conditions, metav1.Condition{Type: podInfoAvailable,
 		Status: metav1.ConditionTrue, Reason: "Reconciling",
 		Message: fmt.Sprintf("Podinfo deployment for (%s) created successfully", podInfo.Name)})
@@ -193,7 +210,7 @@ func (r *PodInfoReconciler) SetupWithManager(mgr ctrl.Manager) error {
 func releaseNeedsUpdate(current *release.Release, podInfo *appsv1alpha1.PodInfo) bool {
 	// Ideally, this would check the installed version against the requested
 	// version in the CRD spec. However, there were some issues configuring
-	// go-helm-client to respect the version spec. Something I would
+	// go-helm-client to respect the OCI version spec. Something I would
 	// dig into given more time
 
 	//if current.Chart.Metadata.Version != podInfo.Spec.Redis.Version {
@@ -202,6 +219,11 @@ func releaseNeedsUpdate(current *release.Release, podInfo *appsv1alpha1.PodInfo)
 	return false
 }
 
+// deploymentNeedsUpdate compares the current deployment in
+// the cluster, as well as the requested configuration based
+// on the podInfo spec. While we might be able to use reflect
+// to simply compare the objects, our options are limited
+// enough at the moment to be explicit
 func deploymentNeedsUpdate(current *appsv1.Deployment, podInfo *appsv1alpha1.PodInfo) bool {
 	container := current.Spec.Template.Spec.Containers[0]
 	if fmt.Sprintf(
@@ -291,6 +313,14 @@ func (r *PodInfoReconciler) podInfoDeployment(podInfo *appsv1alpha1.PodInfo) *ap
 							Value: fmt.Sprintf("tcp://%s-redis-master:6379", podInfo.Name),
 						}},
 						Image: fmt.Sprintf("%s:%s", podInfo.Spec.Image.Repository, podInfo.Spec.Image.Tag),
+						Resources: v1.ResourceRequirements{
+							Limits: v1.ResourceList{
+								"memory": resource.MustParse(podInfo.Spec.Resources.MemoryLimit),
+							},
+							Requests: v1.ResourceList{
+								"cpu": resource.MustParse(podInfo.Spec.Resources.CpuRequest),
+							},
+						},
 					}},
 				},
 			},

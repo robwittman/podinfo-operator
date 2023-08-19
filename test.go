@@ -1,1 +1,0 @@
-package podinfo_operator

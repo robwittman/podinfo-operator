@@ -3,13 +3,8 @@ Sample Operator for https://github.com/stefanprodan/podinfo
 
 ## Getting Started 
 
-Create a local kubernetes cluster with your preferred method. Then we can run the operator either 
-in cluster, or locally
-
-### In-Cluster 
-``` 
-make install deploy  
-```
+Create a local kubernetes cluster with your preferred method. Then we can run the operator, which 
+will connect to the provided cluster
 
 ### Locally 
 ``` 
@@ -26,8 +21,8 @@ well as the [PodInfo Service](https://github.com/stefanprodan/podinfo) connected
 
 ### Connecting to PodInfo 
 
-The operator does no[podinfo_controller_test.go](internal%2Fcontroller%2Fpodinfo_controller_test.go)t deploy an ingress resource for the podinfo service. To connect to it, 
-port-forward to the service 
+The operator does not deploy an ingress resource for the podinfo service. To connect to it, 
+port-forward to the service instead
 ```shell 
 kubectl port-forward svc/podinfo-sample -n default 9898
 ```
@@ -43,7 +38,8 @@ make test
 
 ### E2E Tests
 End to end tests can be executed using 
+
 ``` 
-kind create cluster # Kind cluster is required, skip if you have one already
+kind create cluster # Kind cluster is required for e2e, skip if you have one already
 make test-e2e
 ```
